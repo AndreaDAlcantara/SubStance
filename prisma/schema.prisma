@@ -41,6 +41,7 @@ model PeriodSlot {
   absencePeriods      AbsencePeriod[]
   coverageAssignments CoverageAssignment[]
   bellSchedulePeriods BellSchedulePeriod[]
+  subDayLastPeriods   SubDayEntry[]
 
   @@unique([schoolId, index])
 }
@@ -124,6 +125,9 @@ model Substitute {
   id       String  @id @default(cuid())
   schoolId String
   school   School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  /// The sub's ID in the district's staffing system — the same number they use
+  /// with county HR. Also the key used to match rows when importing a day's roster.
+  subId    String?
   name     String
   email    String
   phone    String?
@@ -131,6 +135,8 @@ model Substitute {
   active   Boolean @default(true)
 
   dayEntries SubDayEntry[]
+
+  @@unique([schoolId, subId])
 }
 
 // ── Daily (ephemeral, kept but no retention UI in MVP) ─────────────────────
@@ -172,16 +178,27 @@ enum JobType {
   FULL
 }
 
+enum SubDayStatus {
+  PRESENT
+  NO_SHOW
+}
+
 model SubDayEntry {
-  id               String     @id @default(cuid())
+  id               String       @id @default(cuid())
   schoolId         String
-  school           School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  school           School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   substituteId     String
-  substitute       Substitute @relation(fields: [substituteId], references: [id], onDelete: Cascade)
-  date             DateTime   @db.Date
+  substitute       Substitute   @relation(fields: [substituteId], references: [id], onDelete: Cascade)
+  date             DateTime     @db.Date
   jobType          JobType
   primaryAbsenceId String?
-  primaryAbsence   Absence?   @relation(fields: [primaryAbsenceId], references: [id], onDelete: SetNull)
+  primaryAbsence   Absence?     @relation(fields: [primaryAbsenceId], references: [id], onDelete: SetNull)
+  /// Set to NO_SHOW when the sub never turned up — everything they were down to
+  /// cover reopens as a gap.
+  status           SubDayStatus @default(PRESENT)
+  /// Last period the sub actually worked before leaving early. Null = here all day.
+  lastPeriodId     String?
+  lastPeriod       PeriodSlot?  @relation(fields: [lastPeriodId], references: [id], onDelete: SetNull)
 
   coverageAssignments CoverageAssignment[]
   notifications       NotificationLog[]

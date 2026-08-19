@@ -25,7 +25,7 @@ export function AddSubstituteDialog() {
 
   const form = useForm<SubstituteForm>({
     resolver: zodResolver(substituteFormSchema),
-    defaultValues: { name: "", email: "", phone: "", notes: "" },
+    defaultValues: { subId: "", name: "", email: "", phone: "", notes: "" },
   });
 
   function onSubmit(values: SubstituteForm) {

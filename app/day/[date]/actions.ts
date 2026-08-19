@@ -1,8 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { getOrCreateDefaultSchool } from "@/lib/school";
+import { afterDayChange } from "@/lib/day-coverage";
 import { dayKeyToDate, isValidDayKey } from "@/lib/day";
 
 export type ActionState = {
@@ -38,6 +38,7 @@ export async function setDayBellSchedule(
     });
   }
 
-  revalidatePath(`/day/${dayKey}`, "layout");
+  // Period times differ between schedules, which changes what a half-day sub covers.
+  await afterDayChange(school.id, dayKey);
   return { success: true };
 }

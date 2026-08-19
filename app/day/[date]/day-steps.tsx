@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const steps = [
   { slug: "absences", label: "Who's out" },
   { slug: "subs", label: "Who's subbing" },
+  { slug: "coverage", label: "Cover a class" },
 ];
 
 export function DaySteps({ dayKey }: { dayKey: string }) {

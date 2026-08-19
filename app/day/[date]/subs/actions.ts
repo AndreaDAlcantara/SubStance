@@ -1,10 +1,10 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { getOrCreateDefaultSchool } from "@/lib/school";
+import { afterDayChange } from "@/lib/day-coverage";
 import { dayKeyToDate, isValidDayKey } from "@/lib/day";
-import type { JobType } from "@/lib/generated/prisma/enums";
+import type { JobType, SubDayStatus } from "@/lib/generated/prisma/enums";
 
 export type ActionState = {
   success: boolean;
@@ -36,7 +36,7 @@ export async function addSubToDay(
     data: { schoolId: school.id, substituteId, date, jobType },
   });
 
-  revalidatePath(`/day/${dayKey}`, "layout");
+  await afterDayChange(school.id, dayKey);
   return { success: true };
 }
 
@@ -44,20 +44,28 @@ export async function removeSubFromDay(
   dayKey: string,
   subDayEntryId: string
 ): Promise<ActionState> {
+  const entry = await prisma.subDayEntry.findUnique({ where: { id: subDayEntryId } });
+  if (!entry) return { success: false, error: "Not found" };
+
   await prisma.subDayEntry.delete({ where: { id: subDayEntryId } });
-  revalidatePath(`/day/${dayKey}`, "layout");
+  await afterDayChange(entry.schoolId, dayKey);
   return { success: true };
 }
 
 export async function updateSubDayEntry(
   dayKey: string,
   subDayEntryId: string,
-  data: { jobType?: JobType; primaryAbsenceId?: string | null }
+  data: {
+    jobType?: JobType;
+    primaryAbsenceId?: string | null;
+    status?: SubDayStatus;
+    lastPeriodId?: string | null;
+  }
 ): Promise<ActionState> {
-  if (data.primaryAbsenceId) {
-    const entry = await prisma.subDayEntry.findUnique({ where: { id: subDayEntryId } });
-    if (!entry) return { success: false, error: "Not found" };
+  const entry = await prisma.subDayEntry.findUnique({ where: { id: subDayEntryId } });
+  if (!entry) return { success: false, error: "Not found" };
 
+  if (data.primaryAbsenceId) {
     // One sub per absent teacher: two subs both "primarily covering" the same
     // teacher would each inherit the same schedule and double-book the room.
     const taken = await prisma.subDayEntry.findFirst({
@@ -83,9 +91,11 @@ export async function updateSubDayEntry(
       ...(data.primaryAbsenceId !== undefined
         ? { primaryAbsenceId: data.primaryAbsenceId }
         : {}),
+      ...(data.status ? { status: data.status } : {}),
+      ...(data.lastPeriodId !== undefined ? { lastPeriodId: data.lastPeriodId } : {}),
     },
   });
 
-  revalidatePath(`/day/${dayKey}`, "layout");
+  await afterDayChange(entry.schoolId, dayKey);
   return { success: true };
 }

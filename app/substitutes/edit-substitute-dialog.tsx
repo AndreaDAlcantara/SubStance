@@ -23,13 +23,20 @@ export function EditSubstituteDialog({
   substitute,
 }: {
   substituteId: string;
-  substitute: { name: string; email: string; phone: string | null; notes: string | null };
+  substitute: {
+    subId: string | null;
+    name: string;
+    email: string;
+    phone: string | null;
+    notes: string | null;
+  };
 }) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [serverError, setServerError] = useState<string | null>(null);
 
   const defaults = {
+    subId: substitute.subId ?? "",
     name: substitute.name,
     email: substitute.email,
     phone: substitute.phone ?? "",

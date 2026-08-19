@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const substituteFormSchema = z.object({
+  subId: z.string().trim().optional(),
   name: z.string().trim().min(1, "Name is required"),
   email: z.string().trim().email("Enter a valid email"),
   phone: z.string().trim().optional(),

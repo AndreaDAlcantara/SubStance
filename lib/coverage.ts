@@ -1,21 +1,30 @@
-import type { JobType, PeriodType } from "@/lib/generated/prisma/enums";
+import type { JobType, PeriodType, SubDayStatus } from "@/lib/generated/prisma/enums";
 
 /**
  * Coverage rules. The heart of the product: a sub assigned to an absent teacher
  * only actually works that teacher's *class* periods. Planning and lunch periods
- * leave the sub free, and the admin can spend that time covering someone else.
+ * leave the sub free, and the admin can spend that time covering someone else
+ * when the day goes wrong.
  *
- * The full assignment board builds on these in a later phase.
+ * Pure functions over plain data — the database layer does the fetching.
  */
 
-export type PeriodTiming = {
+export type PeriodRef = {
   periodSlotId: string;
+  index: number;
   startMinutes: number;
+};
+
+export type SubAvailability = {
+  jobType: JobType;
+  status: SubDayStatus;
+  /** Index of the last period they worked before leaving. Null = here all day. */
+  lastPeriodIndex: number | null;
 };
 
 /** Whether a half-day sub is around for a given period. */
 export function isPeriodEligibleForJobType(
-  period: PeriodTiming,
+  period: Pick<PeriodRef, "startMinutes">,
   jobType: JobType,
   middayCutoffMinutes: number
 ): boolean {
@@ -24,9 +33,26 @@ export function isPeriodEligibleForJobType(
   return period.startMinutes >= middayCutoffMinutes;
 }
 
-export type SubDayScheduleInput<P extends PeriodTiming> = {
+/**
+ * Whether the sub is actually in the building for a period — their booked hours,
+ * minus the two ways a sub falls through on the day: never showing up, or leaving
+ * partway through.
+ */
+export function isSubAvailableForPeriod(
+  period: PeriodRef,
+  availability: SubAvailability,
+  middayCutoffMinutes: number
+): boolean {
+  if (availability.status === "NO_SHOW") return false;
+  if (availability.lastPeriodIndex !== null && period.index > availability.lastPeriodIndex) {
+    return false;
+  }
+  return isPeriodEligibleForJobType(period, availability.jobType, middayCutoffMinutes);
+}
+
+export type SubDayScheduleInput<P extends PeriodRef> = {
   periods: P[];
-  jobType: JobType;
+  availability: SubAvailability;
   middayCutoffMinutes: number;
   /** What the covered teacher does each period. Missing = nothing scheduled. */
   typeByPeriodSlotId: Map<string, PeriodType>;
@@ -35,30 +61,84 @@ export type SubDayScheduleInput<P extends PeriodTiming> = {
 };
 
 /**
- * Splits a sub's day into the periods they're actually teaching and the periods
- * they're free — the slack this app exists to surface.
+ * Splits a sub's day into the periods they're teaching and the periods they're
+ * free — the slack this app exists to surface.
  *
- * A sub with no teacher assigned yet is free for every period they're around for.
+ * A sub with no teacher assigned is free for every period they're around for.
  */
-export function computeSubDaySchedule<P extends PeriodTiming>({
+export function computeSubDaySchedule<P extends PeriodRef>({
   periods,
-  jobType,
+  availability,
   middayCutoffMinutes,
   typeByPeriodSlotId,
   absentPeriodSlotIds,
 }: SubDayScheduleInput<P>): { covering: P[]; free: P[] } {
-  const eligible = periods.filter((period) =>
-    isPeriodEligibleForJobType(period, jobType, middayCutoffMinutes)
+  const present = periods.filter((period) =>
+    isSubAvailableForPeriod(period, availability, middayCutoffMinutes)
   );
 
-  const covering = eligible.filter((period) => {
+  const covering = present.filter((period) => {
     const inScope =
       absentPeriodSlotIds === null || absentPeriodSlotIds.has(period.periodSlotId);
     return inScope && typeByPeriodSlotId.get(period.periodSlotId) === "CLASS";
   });
 
   const coveringIds = new Set(covering.map((p) => p.periodSlotId));
-  const free = eligible.filter((period) => !coveringIds.has(period.periodSlotId));
+  const free = present.filter((period) => !coveringIds.has(period.periodSlotId));
 
   return { covering, free };
+}
+
+export type AbsenceForNeeds = {
+  absenceId: string;
+  teacherId: string;
+  /** Null means out the whole day. */
+  absentPeriodSlotIds: Set<string> | null;
+  typeByPeriodSlotId: Map<string, PeriodType>;
+};
+
+export type CoverageNeed = {
+  absenceId: string;
+  teacherId: string;
+  periodSlotId: string;
+};
+
+/**
+ * Every (absence, period) pair that needs a body in the room. Only class periods
+ * count — an absent teacher's planning and lunch need nobody.
+ */
+export function computeCoverageNeeds(
+  absences: AbsenceForNeeds[],
+  periods: PeriodRef[]
+): CoverageNeed[] {
+  const needs: CoverageNeed[] = [];
+
+  for (const absence of absences) {
+    for (const period of periods) {
+      const inScope =
+        absence.absentPeriodSlotIds === null ||
+        absence.absentPeriodSlotIds.has(period.periodSlotId);
+      if (!inScope) continue;
+      if (absence.typeByPeriodSlotId.get(period.periodSlotId) !== "CLASS") continue;
+
+      needs.push({
+        absenceId: absence.absenceId,
+        teacherId: absence.teacherId,
+        periodSlotId: period.periodSlotId,
+      });
+    }
+  }
+
+  return needs;
+}
+
+const needKey = (absenceId: string, periodSlotId: string) => `${absenceId}:${periodSlotId}`;
+
+/** The needs nobody is covering — the gaps the admin has to close. */
+export function computeOpenGaps(
+  needs: CoverageNeed[],
+  filled: { absenceId: string; periodId: string }[]
+): CoverageNeed[] {
+  const filledKeys = new Set(filled.map((f) => needKey(f.absenceId, f.periodId)));
+  return needs.filter((need) => !filledKeys.has(needKey(need.absenceId, need.periodSlotId)));
 }

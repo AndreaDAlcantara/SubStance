@@ -1,8 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { getOrCreateDefaultSchool } from "@/lib/school";
+import { afterDayChange } from "@/lib/day-coverage";
 import { dayKeyToDate, isValidDayKey } from "@/lib/day";
 
 export type ActionState = {
@@ -12,7 +12,8 @@ export type ActionState = {
 
 export async function markTeacherAbsent(
   dayKey: string,
-  teacherId: string
+  teacherId: string,
+  periodSlotIds?: string[]
 ): Promise<ActionState> {
   if (!isValidDayKey(dayKey)) return { success: false, error: "Invalid date" };
 
@@ -30,17 +31,29 @@ export async function markTeacherAbsent(
     return { success: false, error: `${teacher.name} is already marked out` };
   }
 
+  const partial = periodSlotIds && periodSlotIds.length > 0;
   await prisma.absence.create({
-    data: { schoolId: school.id, teacherId, date, scope: "FULL_DAY" },
+    data: {
+      schoolId: school.id,
+      teacherId,
+      date,
+      scope: partial ? "PARTIAL" : "FULL_DAY",
+      ...(partial
+        ? { periods: { create: periodSlotIds.map((periodId) => ({ periodId })) } }
+        : {}),
+    },
   });
 
-  revalidatePath(`/day/${dayKey}`, "layout");
+  await afterDayChange(school.id, dayKey);
   return { success: true };
 }
 
 export async function removeAbsence(dayKey: string, absenceId: string): Promise<ActionState> {
+  const absence = await prisma.absence.findUnique({ where: { id: absenceId } });
+  if (!absence) return { success: false, error: "Absence not found" };
+
   await prisma.absence.delete({ where: { id: absenceId } });
-  revalidatePath(`/day/${dayKey}`, "layout");
+  await afterDayChange(absence.schoolId, dayKey);
   return { success: true };
 }
 
@@ -71,6 +84,6 @@ export async function setAbsenceScope(
     }
   });
 
-  revalidatePath(`/day/${dayKey}`, "layout");
+  await afterDayChange(absence.schoolId, dayKey);
   return { success: true };
 }

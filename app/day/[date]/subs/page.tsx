@@ -4,6 +4,7 @@ import { getOrCreateDefaultSchool } from "@/lib/school";
 import { getDayPeriods } from "@/lib/school-day";
 import { dayKeyToDate } from "@/lib/day";
 import { computeSubDaySchedule } from "@/lib/coverage";
+import { buttonVariants } from "@/components/ui/button";
 import { AddSubPicker } from "./add-sub-picker";
 import { SubDayCard } from "./sub-day-card";
 
@@ -46,9 +47,17 @@ export default async function SubsPage({ params }: PageProps<"/day/[date]/subs">
         ? absenceById.get(entry.primaryAbsenceId)
         : undefined;
 
+      const lastPeriodIndex = entry.lastPeriodId
+        ? (dayPeriods.find((p) => p.periodSlotId === entry.lastPeriodId)?.index ?? null)
+        : null;
+
       const { covering, free } = computeSubDaySchedule({
         periods: dayPeriods,
-        jobType: entry.jobType,
+        availability: {
+          jobType: entry.jobType,
+          status: entry.status,
+          lastPeriodIndex,
+        },
         middayCutoffMinutes: school.middayCutoffMinutes,
         typeByPeriodSlotId: new Map(
           absence?.teacher.periodAssignments.map((pa) => [pa.periodId, pa.type]) ?? []
@@ -80,8 +89,20 @@ export default async function SubsPage({ params }: PageProps<"/day/[date]/subs">
         </p>
       ) : (
         <>
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold tracking-tight">Who&apos;s subbing today?</h2>
+            <Link
+              href={`/day/${dayKey}/subs/upload`}
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              Upload today&apos;s list
+            </Link>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <p className="text-muted-foreground text-sm">
+              Or add someone by hand:
+            </p>
             <AddSubPicker
               dayKey={dayKey}
               availableSubstitutes={substitutes
