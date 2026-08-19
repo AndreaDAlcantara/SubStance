@@ -1,0 +1,238 @@
+// SubStance — data model
+// See /Users/dalcantarafabbri/.claude/plans/me-ajude-a-criar-sharded-pine.md for the design rationale.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Durable (master schedule) ──────────────────────────────────────────────
+
+model School {
+  id                  String   @id @default(cuid())
+  name                String
+  timezone            String   @default("America/Chicago")
+  middayCutoffMinutes Int      @default(720)
+  createdAt           DateTime @default(now())
+
+  periodSlots   PeriodSlot[]
+  bellSchedules BellSchedule[]
+  schoolDays    SchoolDay[]
+  teachers      Teacher[]
+  substitutes   Substitute[]
+  absences      Absence[]
+  subDayEntries SubDayEntry[]
+}
+
+/// Canonical, ordered list of periods for a school. Shared across every BellSchedule
+/// variant — the count/order/label of periods never changes, only per-variant timing does.
+model PeriodSlot {
+  id       String @id @default(cuid())
+  schoolId String
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  index    Int
+  label    String
+
+  teacherAssignments  TeacherPeriodAssignment[]
+  absencePeriods      AbsencePeriod[]
+  coverageAssignments CoverageAssignment[]
+  bellSchedulePeriods BellSchedulePeriod[]
+
+  @@unique([schoolId, index])
+}
+
+/// A named bell schedule variant (e.g. "Regular Day", "Exam Week"). Exactly one per
+/// school is marked isDefault — the schedule used when a date has no SchoolDay override.
+model BellSchedule {
+  id        String  @id @default(cuid())
+  schoolId  String
+  school    School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name      String
+  isDefault Boolean @default(false)
+
+  periods    BellSchedulePeriod[]
+  schoolDays SchoolDay[]
+
+  @@unique([schoolId, name])
+}
+
+/// Per-variant start/end time for a given PeriodSlot.
+model BellSchedulePeriod {
+  id             String       @id @default(cuid())
+  bellScheduleId String
+  bellSchedule   BellSchedule @relation(fields: [bellScheduleId], references: [id], onDelete: Cascade)
+  periodSlotId   String
+  periodSlot     PeriodSlot   @relation(fields: [periodSlotId], references: [id], onDelete: Cascade)
+  startMinutes   Int
+  endMinutes     Int
+
+  @@unique([bellScheduleId, periodSlotId])
+}
+
+/// Which BellSchedule applies on a given date. No row for a date means "use the default".
+model SchoolDay {
+  id             String       @id @default(cuid())
+  schoolId       String
+  school         School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  date           DateTime     @db.Date
+  bellScheduleId String
+  bellSchedule   BellSchedule @relation(fields: [bellScheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, date])
+}
+
+model Teacher {
+  id       String  @id @default(cuid())
+  schoolId String
+  school   School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name     String
+  email    String
+  phone    String?
+  room     String?
+  active   Boolean @default(true)
+
+  periodAssignments TeacherPeriodAssignment[]
+  absences          Absence[]
+
+  @@unique([schoolId, email])
+}
+
+enum PeriodType {
+  CLASS
+  PLANNING
+  LUNCH
+}
+
+model TeacherPeriodAssignment {
+  id           String     @id @default(cuid())
+  teacherId    String
+  teacher      Teacher    @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  periodId     String
+  periodSlot   PeriodSlot @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  type         PeriodType
+  room         String?
+  subjectLabel String?
+
+  @@unique([teacherId, periodId])
+}
+
+model Substitute {
+  id       String  @id @default(cuid())
+  schoolId String
+  school   School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name     String
+  email    String
+  phone    String?
+  notes    String?
+  active   Boolean @default(true)
+
+  dayEntries SubDayEntry[]
+}
+
+// ── Daily (ephemeral, kept but no retention UI in MVP) ─────────────────────
+
+enum AbsenceScope {
+  FULL_DAY
+  PARTIAL
+}
+
+model Absence {
+  id        String       @id @default(cuid())
+  schoolId  String
+  school    School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  teacherId String
+  teacher   Teacher      @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  date      DateTime     @db.Date
+  scope     AbsenceScope
+
+  periods             AbsencePeriod[]
+  subDayEntries       SubDayEntry[]
+  coverageAssignments CoverageAssignment[]
+
+  @@unique([teacherId, date])
+}
+
+model AbsencePeriod {
+  id         String     @id @default(cuid())
+  absenceId  String
+  absence    Absence    @relation(fields: [absenceId], references: [id], onDelete: Cascade)
+  periodId   String
+  periodSlot PeriodSlot @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  @@unique([absenceId, periodId])
+}
+
+enum JobType {
+  AM
+  PM
+  FULL
+}
+
+model SubDayEntry {
+  id               String     @id @default(cuid())
+  schoolId         String
+  school           School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  substituteId     String
+  substitute       Substitute @relation(fields: [substituteId], references: [id], onDelete: Cascade)
+  date             DateTime   @db.Date
+  jobType          JobType
+  primaryAbsenceId String?
+  primaryAbsence   Absence?   @relation(fields: [primaryAbsenceId], references: [id], onDelete: SetNull)
+
+  coverageAssignments CoverageAssignment[]
+  notifications       NotificationLog[]
+
+  @@unique([substituteId, date])
+}
+
+enum CoverageSource {
+  PRIMARY
+  SLACK
+}
+
+model CoverageAssignment {
+  id            String         @id @default(cuid())
+  date          DateTime       @db.Date
+  periodId      String
+  periodSlot    PeriodSlot     @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  absenceId     String
+  absence       Absence        @relation(fields: [absenceId], references: [id], onDelete: Cascade)
+  subDayEntryId String
+  subDayEntry   SubDayEntry    @relation(fields: [subDayEntryId], references: [id], onDelete: Cascade)
+  source        CoverageSource
+  notifiedAt    DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@unique([absenceId, periodId])
+  @@unique([subDayEntryId, periodId])
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model NotificationLog {
+  id                String              @id @default(cuid())
+  subDayEntryId     String
+  subDayEntry       SubDayEntry         @relation(fields: [subDayEntryId], references: [id], onDelete: Cascade)
+  channel           NotificationChannel
+  recipient         String
+  messageBody       String
+  status            NotificationStatus  @default(PENDING)
+  providerMessageId String?
+  errorMessage      String?
+  sentAt            DateTime?
+  createdAt         DateTime            @default(now())
+}
