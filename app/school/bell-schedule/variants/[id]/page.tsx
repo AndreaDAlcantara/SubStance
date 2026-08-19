@@ -8,9 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default async function BellScheduleVariantPage({
   params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+}: PageProps<"/school/bell-schedule/variants/[id]">) {
   const { id } = await params;
 
   const schedule = await prisma.bellSchedule.findUnique({ where: { id } });

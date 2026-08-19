@@ -102,6 +102,7 @@ export function TeacherScheduleForm({
                 <div className="flex w-full flex-col gap-1 sm:w-[150px]">
                   <Label className="text-muted-foreground text-xs">Type</Label>
                   <Select
+                    items={TYPE_LABELS}
                     value={currentType}
                     onValueChange={(v) =>
                       v &&

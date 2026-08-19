@@ -146,6 +146,7 @@ export function TeacherScheduleUpload() {
                 <div className="flex flex-wrap items-end gap-2">
                   <div className="flex w-full flex-col gap-1 sm:w-[140px]">
                     <Select
+                      items={TYPE_LABELS}
                       value={row.type}
                       onValueChange={(v) => v && updateRow(index, { type: v as typeof row.type })}
                     >

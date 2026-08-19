@@ -8,9 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default async function TeacherSchedulePage({
   params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+}: PageProps<"/teachers/[id]/schedule">) {
   const { id } = await params;
 
   const teacher = await prisma.teacher.findUnique({ where: { id } });

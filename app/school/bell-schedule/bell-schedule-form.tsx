@@ -98,6 +98,7 @@ export function BellScheduleForm({
         <div className="flex flex-col gap-2">
           <Label htmlFor="timezone">Timezone</Label>
           <Select
+            items={Object.fromEntries(US_TIMEZONES.map((tz) => [tz.value, tz.label]))}
             value={form.watch("timezone")}
             onValueChange={(v) => v && form.setValue("timezone", v, { shouldDirty: true })}
           >
