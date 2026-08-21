@@ -114,12 +114,27 @@ export async function confirmRosterUpload(
   return { success: true, summary: { staffed, teachersMarkedOut, skipped } };
 }
 
+/**
+ * Sub ID is the better key, but it only works once we've seen it. Someone added by
+ * hand has no ID yet, so falling through to email is what stops the first import
+ * from duplicating a directory the admin already typed in — matching on email then
+ * backfills the ID onto the person we already knew about.
+ */
+async function findExistingSubstitute(schoolId: string, row: ConfirmRosterRow) {
+  if (row.subId) {
+    const bySubId = await prisma.substitute.findFirst({
+      where: { schoolId, subId: row.subId },
+    });
+    if (bySubId) return bySubId;
+  }
+  if (row.email) {
+    return prisma.substitute.findFirst({ where: { schoolId, email: row.email } });
+  }
+  return null;
+}
+
 async function upsertSubstitute(schoolId: string, row: ConfirmRosterRow) {
-  const existing = row.subId
-    ? await prisma.substitute.findFirst({ where: { schoolId, subId: row.subId } })
-    : row.email
-      ? await prisma.substitute.findFirst({ where: { schoolId, email: row.email } })
-      : null;
+  const existing = await findExistingSubstitute(schoolId, row);
 
   if (existing) {
     return prisma.substitute.update({

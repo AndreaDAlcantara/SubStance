@@ -10,6 +10,7 @@ import {
   type CoverageNeed,
   type SubAvailability,
 } from "@/lib/coverage";
+import type { SubDayStatus } from "@/lib/generated/prisma/enums";
 
 /**
  * Resolving a day's coverage.
@@ -90,6 +91,7 @@ export type CoveredView = {
   assignmentId: string | null;
   periodSlotId: string;
   absenceId: string;
+  subDayEntryId: string;
   period: DayPeriod;
   teacherName: string;
   room: string | null;
@@ -247,6 +249,7 @@ export async function getDayCoverage(schoolId: string, dayKey: string) {
           assignmentId: row.assignmentId,
           periodSlotId: row.periodSlotId,
           absenceId: row.absenceId,
+          subDayEntryId: row.entryId,
           period,
           substituteName: subByEntry.get(row.entryId)?.name ?? "Unknown",
           phone: subByEntry.get(row.entryId)?.phone ?? null,
@@ -258,4 +261,71 @@ export async function getDayCoverage(schoolId: string, dayKey: string) {
     .sort((a, b) => a.period.index - b.period.index);
 
   return { periods, gaps, freeSubs, covered, needs, absences, subDayEntries, school };
+}
+
+export type SubSlot = {
+  period: DayPeriod;
+  /** `off` means not in the building — half day, left early, or never arrived. */
+  kind: "covering" | "free" | "off";
+  teacherName?: string;
+  room?: string | null;
+};
+
+export type SubLocation = {
+  subDayEntryId: string;
+  substituteName: string;
+  subId: string | null;
+  phone: string | null;
+  status: SubDayStatus;
+  /** Every period of the day, in order — the whole timeline for one sub. */
+  slots: SubSlot[];
+};
+
+/**
+ * Each substitute's whole day, period by period. Answers "where is this person
+ * right now", and just as often "who is in room 3211 at the moment".
+ */
+export async function getSubLocations(
+  schoolId: string,
+  dayKey: string
+): Promise<{ periods: DayPeriod[]; subs: SubLocation[] }> {
+  const { periods, covered, subDayEntries, school } = await getDayCoverage(schoolId, dayKey);
+
+  const coveredByEntry = new Map<string, Map<string, CoveredView>>();
+  for (const row of covered) {
+    const forEntry = coveredByEntry.get(row.subDayEntryId) ?? new Map<string, CoveredView>();
+    forEntry.set(row.periodSlotId, row);
+    coveredByEntry.set(row.subDayEntryId, forEntry);
+  }
+
+  const subs = subDayEntries
+    .map((entry) => {
+      const availability = availabilityOf(entry, periods);
+      const forEntry = coveredByEntry.get(entry.id);
+
+      return {
+        subDayEntryId: entry.id,
+        substituteName: entry.substitute.name,
+        subId: entry.substitute.subId,
+        phone: entry.substitute.phone,
+        status: entry.status,
+        slots: periods.map((period): SubSlot => {
+          if (!isSubAvailableForPeriod(period, availability, school.middayCutoffMinutes)) {
+            return { period, kind: "off" };
+          }
+          const assignment = forEntry?.get(period.periodSlotId);
+          return assignment
+            ? {
+                period,
+                kind: "covering",
+                teacherName: assignment.teacherName,
+                room: assignment.room,
+              }
+            : { period, kind: "free" };
+        }),
+      };
+    })
+    .sort((a, b) => a.substituteName.localeCompare(b.substituteName));
+
+  return { periods, subs };
 }

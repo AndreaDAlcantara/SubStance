@@ -6,6 +6,7 @@ import {
   computeSubDaySchedule,
   isPeriodEligibleForJobType,
   isSubAvailableForPeriod,
+  resolveDayMoment,
   type SubAvailability,
 } from "./coverage";
 
@@ -237,5 +238,60 @@ describe("computeOpenGaps", () => {
       needs.map((n) => ({ absenceId: n.absenceId, periodId: n.periodSlotId }))
     );
     expect(gaps).toEqual([]);
+  });
+});
+
+describe("resolveDayMoment", () => {
+  // Periods with a five-minute passing time between them.
+  const spans = [
+    { periodSlotId: "p1", index: 0, startMinutes: 8 * 60, endMinutes: 8 * 60 + 50 },
+    { periodSlotId: "p2", index: 1, startMinutes: 8 * 60 + 55, endMinutes: 9 * 60 + 45 },
+    { periodSlotId: "p3", index: 2, startMinutes: 9 * 60 + 50, endMinutes: 10 * 60 + 40 },
+  ];
+
+  it("finds the period in progress", () => {
+    expect(resolveDayMoment(spans, 9 * 60)).toEqual({
+      kind: "in-period",
+      periodSlotId: "p2",
+    });
+  });
+
+  it("treats a period's start as inside it and its end as outside", () => {
+    expect(resolveDayMoment(spans, 8 * 60)).toEqual({ kind: "in-period", periodSlotId: "p1" });
+    expect(resolveDayMoment(spans, 8 * 60 + 50)).toEqual({
+      kind: "between-periods",
+      nextPeriodSlotId: "p2",
+    });
+  });
+
+  it("points at what's next during passing time", () => {
+    expect(resolveDayMoment(spans, 9 * 60 + 47)).toEqual({
+      kind: "between-periods",
+      nextPeriodSlotId: "p3",
+    });
+  });
+
+  it("distinguishes before school from passing time", () => {
+    expect(resolveDayMoment(spans, 7 * 60)).toEqual({
+      kind: "before-school",
+      nextPeriodSlotId: "p1",
+    });
+  });
+
+  it("reports after school once the last period ends", () => {
+    expect(resolveDayMoment(spans, 10 * 60 + 40)).toEqual({ kind: "after-school" });
+    expect(resolveDayMoment(spans, 23 * 60)).toEqual({ kind: "after-school" });
+  });
+
+  it("survives a school with no periods set up yet", () => {
+    expect(resolveDayMoment([], 9 * 60)).toEqual({ kind: "no-periods" });
+  });
+
+  it("does not depend on the periods arriving in order", () => {
+    const shuffled = [spans[2], spans[0], spans[1]];
+    expect(resolveDayMoment(shuffled, 7 * 60)).toEqual({
+      kind: "before-school",
+      nextPeriodSlotId: "p1",
+    });
   });
 });

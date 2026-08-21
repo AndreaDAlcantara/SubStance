@@ -132,6 +132,37 @@ export function computeCoverageNeeds(
   return needs;
 }
 
+export type PeriodSpan = PeriodRef & { endMinutes: number };
+
+/**
+ * Where the clock is in the school day. The gaps between periods matter: asking
+ * "where is my sub right now" during passing time should point at what's next,
+ * not leave the question unanswered.
+ */
+export type DayMoment =
+  | { kind: "before-school"; nextPeriodSlotId: string }
+  | { kind: "in-period"; periodSlotId: string }
+  | { kind: "between-periods"; nextPeriodSlotId: string }
+  | { kind: "after-school" }
+  | { kind: "no-periods" };
+
+export function resolveDayMoment(periods: PeriodSpan[], nowMinutes: number): DayMoment {
+  const ordered = [...periods].sort((a, b) => a.startMinutes - b.startMinutes);
+  if (ordered.length === 0) return { kind: "no-periods" };
+
+  const current = ordered.find(
+    (p) => nowMinutes >= p.startMinutes && nowMinutes < p.endMinutes
+  );
+  if (current) return { kind: "in-period", periodSlotId: current.periodSlotId };
+
+  const next = ordered.find((p) => p.startMinutes > nowMinutes);
+  if (!next) return { kind: "after-school" };
+
+  return nowMinutes < ordered[0].startMinutes
+    ? { kind: "before-school", nextPeriodSlotId: next.periodSlotId }
+    : { kind: "between-periods", nextPeriodSlotId: next.periodSlotId };
+}
+
 const needKey = (absenceId: string, periodSlotId: string) => `${absenceId}:${periodSlotId}`;
 
 /** The needs nobody is covering — the gaps the admin has to close. */
